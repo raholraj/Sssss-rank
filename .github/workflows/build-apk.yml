@@ -16,19 +16,17 @@ jobs:
       - name: Unzip source
         run: |
           unzip -o powerfiles_fixed.zip -d powerfiles
-          # Move contents to root
           shopt -s dotglob
           cp -r powerfiles/* .
           rm -rf powerfiles
-          ls -la
+          echo "=== Source files ==="
+          find . -maxdepth 3 -type f | head -40
 
       - name: Fix known Dart error (asMap on Iterable)
         run: |
-          # Fix: Iterable has no asMap, need toList() first
           if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
             sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
             echo "Fixed asMap error"
-            grep -n "asMap" lib/features/telegram_bot/telegram_settings_screen.dart || true
           fi
 
       - name: Setup Java
@@ -46,30 +44,42 @@ jobs:
 
       - name: Prepare Android project
         run: |
-          # Remove conflicting Groovy settings if Kotlin DSL exists
-          if [ -f android/settings.gradle.kts ] && [ -f android/settings.gradle ]; then
-            rm -f android/settings.gradle
-            echo "Removed conflicting settings.gradle"
-          fi
-          if [ -f android/build.gradle ] && [ -f android/build.gradle.kts ]; then
-            rm -f android/build.gradle
-          fi
-          if [ -f android/app/build.gradle ] && [ -f android/app/build.gradle.kts ]; then
-            rm -f android/app/build.gradle
-          fi
+          set -e
 
-          # Ensure gradle wrapper exists
+          # 1. Generate missing files (gradle wrapper etc) if needed
           if [ ! -f android/gradlew ]; then
-            echo "Generating missing Android files with flutter create..."
+            echo "Running flutter create to generate wrapper..."
             flutter create . --platforms=android --project-name powerfiles || true
-            # Re-apply Kotlin DSL preference
-            if [ -f android/settings.gradle.kts ] && [ -f android/settings.gradle ]; then
-              rm -f android/settings.gradle
-            fi
           fi
 
-          # Make gradlew executable
+          # 2. Force remove ALL Groovy build files so Kotlin DSL wins
+          rm -f android/settings.gradle
+          rm -f android/build.gradle
+          rm -f android/app/build.gradle
+          echo "Removed Groovy gradle files"
+
+          # 3. Force Gradle 8.7 (needed for AGP 8.3+ / Java 17)
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' android/gradle/wrapper/gradle-wrapper.properties
+            echo "Updated Gradle to 8.7"
+            cat android/gradle/wrapper/gradle-wrapper.properties
+          else
+            echo "WARNING: gradle-wrapper.properties not found"
+            mkdir -p android/gradle/wrapper
+            cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
+EOF
+          fi
+
           chmod +x android/gradlew || true
+
+          # Show what we have
+          echo "=== Android files ==="
+          find android -name "*.gradle*" -o -name "gradlew*" | sort
 
       - name: Get dependencies
         run: flutter pub get
