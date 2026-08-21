@@ -22,7 +22,7 @@ jobs:
           echo "=== Source files ==="
           find . -maxdepth 3 -type f | head -40
 
-      - name: Fix known Dart error (asMap on Iterable)
+      - name: Fix known Dart error
         run: |
           if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
             sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
@@ -46,39 +46,26 @@ jobs:
         run: |
           set -e
 
-          # 1. Generate missing files (gradle wrapper etc) if needed
           if [ ! -f android/gradlew ]; then
             echo "Running flutter create to generate wrapper..."
             flutter create . --platforms=android --project-name powerfiles || true
           fi
 
-          # 2. Force remove ALL Groovy build files so Kotlin DSL wins
+          # Force remove Groovy files so Kotlin DSL is used
           rm -f android/settings.gradle
           rm -f android/build.gradle
           rm -f android/app/build.gradle
           echo "Removed Groovy gradle files"
 
-          # 3. Force Gradle 8.7 (needed for AGP 8.3+ / Java 17)
-          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-all.zip|' android/gradle/wrapper/gradle-wrapper.properties
-            echo "Updated Gradle to 8.7"
-            cat android/gradle/wrapper/gradle-wrapper.properties
-          else
-            echo "WARNING: gradle-wrapper.properties not found"
-            mkdir -p android/gradle/wrapper
-            cat > android/gradle/wrapper/gradle-wrapper.properties << 'EOF'
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip
-EOF
-          fi
+          # Force Gradle 8.7
+          mkdir -p android/gradle/wrapper
+          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
+          echo "Gradle wrapper set to 8.7"
+          cat android/gradle/wrapper/gradle-wrapper.properties
 
           chmod +x android/gradlew || true
 
-          # Show what we have
-          echo "=== Android files ==="
+          echo "=== Android gradle files ==="
           find android -name "*.gradle*" -o -name "gradlew*" | sort
 
       - name: Get dependencies
