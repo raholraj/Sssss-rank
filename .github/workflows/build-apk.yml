@@ -20,44 +20,22 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Fix Dart + Kotlin compile errors
+      - name: Fix compile errors
         run: |
-          # 1. Dart asMap fix
-          if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
-            sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
-            echo "Fixed Dart asMap"
-          fi
+          # Dart fix
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart || true
 
-          # 2. Kotlin StorageChannel - findLargeFiles needs .toList()
-          KT=android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          if [ -f "$KT" ]; then
-            # Add .toList() after the map block of findLargeFiles if missing
-            python3 -c "
-import re
-with open('$KT') as f: c = f.read()
-# Fix findLargeFiles
-c2 = re.sub(
-    r'(private fun findLargeFiles.*?\.map \{ file ->.*?\n\s+\})(\s*\n\s*\})',
-    r'\1.toList()\2',
-    c,
-    count=1,
-    flags=re.DOTALL
-)
-# Fix findDuplicateCandidates  
-c2 = re.sub(
-    r'(\.take\(50\))( // Return top 50.*?\n\s*\})',
-    r'\1.toList()\2',
-    c2,
-    count=1,
-    flags=re.DOTALL
-)
-if c2 != c:
-    with open('$KT','w') as f: f.write(c2)
-    print('Fixed Kotlin StorageChannel')
-else:
-    print('Kotlin patterns already fixed or not found')
-"
-          fi
+          # Kotlin fix 1: findLargeFiles - add .toList() before closing of function
+          # Replace the map closing brace pattern
+          sed -i 's/"extension" to file.extension$/"extension" to file.extension/' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+          # More reliable: use perl for multiline
+          perl -i -0pe 's/("extension" to file\.extension\n\s+\}\n\s+)(\})/$1.toList()\n$2/s' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+
+          # Kotlin fix 2: findDuplicateCandidates
+          sed -i 's/\.take(50) \/\/ Return top 50/.take(50).toList() \/\/ Return top 50/' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+
+          echo "Fixes applied"
+          grep -n "toList" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -74,21 +52,13 @@ else:
 
       - name: Prepare Android project
         run: |
-          set -e
           if [ ! -f android/gradlew ]; then
             flutter create . --platforms=android --project-name powerfiles || true
           fi
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' \
-            'distributionBase=GRADLE_USER_HOME' \
-            'distributionPath=wrapper/dists' \
-            'zipStoreBase=GRADLE_USER_HOME' \
-            'zipStorePath=wrapper/dists' \
-            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
-            > android/gradle/wrapper/gradle-wrapper.properties
+          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
-          echo "Gradle set to 8.7"
 
       - name: Get dependencies
         run: flutter pub get
