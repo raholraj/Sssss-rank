@@ -19,14 +19,44 @@ jobs:
           shopt -s dotglob
           cp -r powerfiles/* .
           rm -rf powerfiles
-          echo "=== Source files ==="
-          find . -maxdepth 3 -type f | head -40
 
-      - name: Fix known Dart error
+      - name: Fix Dart + Kotlin compile errors
         run: |
+          # 1. Dart asMap fix
           if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
             sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
-            echo "Fixed asMap error"
+            echo "Fixed Dart asMap"
+          fi
+
+          # 2. Kotlin StorageChannel - findLargeFiles needs .toList()
+          KT=android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          if [ -f "$KT" ]; then
+            # Add .toList() after the map block of findLargeFiles if missing
+            python3 -c "
+import re
+with open('$KT') as f: c = f.read()
+# Fix findLargeFiles
+c2 = re.sub(
+    r'(private fun findLargeFiles.*?\.map \{ file ->.*?\n\s+\})(\s*\n\s*\})',
+    r'\1.toList()\2',
+    c,
+    count=1,
+    flags=re.DOTALL
+)
+# Fix findDuplicateCandidates  
+c2 = re.sub(
+    r'(\.take\(50\))( // Return top 50.*?\n\s*\})',
+    r'\1.toList()\2',
+    c2,
+    count=1,
+    flags=re.DOTALL
+)
+if c2 != c:
+    with open('$KT','w') as f: f.write(c2)
+    print('Fixed Kotlin StorageChannel')
+else:
+    print('Kotlin patterns already fixed or not found')
+"
           fi
 
       - name: Setup Java
@@ -45,28 +75,20 @@ jobs:
       - name: Prepare Android project
         run: |
           set -e
-
           if [ ! -f android/gradlew ]; then
-            echo "Running flutter create to generate wrapper..."
             flutter create . --platforms=android --project-name powerfiles || true
           fi
-
-          # Force remove Groovy files so Kotlin DSL is used
-          rm -f android/settings.gradle
-          rm -f android/build.gradle
-          rm -f android/app/build.gradle
-          echo "Removed Groovy gradle files"
-
-          # Force Gradle 8.7
+          rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
-          echo "Gradle wrapper set to 8.7"
-          cat android/gradle/wrapper/gradle-wrapper.properties
-
+          printf '%s\n' \
+            'distributionBase=GRADLE_USER_HOME' \
+            'distributionPath=wrapper/dists' \
+            'zipStoreBase=GRADLE_USER_HOME' \
+            'zipStorePath=wrapper/dists' \
+            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
+            > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
-
-          echo "=== Android gradle files ==="
-          find android -name "*.gradle*" -o -name "gradlew*" | sort
+          echo "Gradle set to 8.7"
 
       - name: Get dependencies
         run: flutter pub get
