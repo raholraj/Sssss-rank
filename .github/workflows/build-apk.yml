@@ -20,43 +20,113 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Fix all compile errors
+      - name: Fix Dart, Kotlin, Manifest
         run: |
           set -e
 
-          # 1. Dart asMap fix
+          # === 1. Dart asMap ===
           sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
             lib/features/telegram_bot/telegram_settings_screen.dart
-          echo "Fixed Dart asMap"
+          echo "OK: Dart asMap"
 
-          # 2. Kotlin Sequence -> List fixes
-          sed -i 's/\.take(50) \/\//.take(50).toList() \/\//' \
-            android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          # === 2. Kotlin toList fixes ===
+          KT=android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          sed -i 's/\.take(50) \/\//.take(50).toList() \/\//' "$KT"
+          # Force .toList() after the map in findLargeFiles
+          perl -i -0pe 's/("extension" to file\.extension\n\s+\}\n\s+)\}/$1}.toList()/s' "$KT"
+          echo "OK: Kotlin toList"
+          grep -n toList "$KT" || true
 
-          # Add .toList() after map block in findLargeFiles
-          # Replace: }\n            }\n    }  pattern near extension
-          sed -i '/"extension" to file.extension/{n; s/^\([[:space:]]*\)}$/\1}/; n; s/^\([[:space:]]*\)}$/\1}.toList()/}' \
-            android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+          # === 3. Rewrite AndroidManifest without broken ScanService ===
+          cat > android/app/src/main/AndroidManifest.xml << 'MANIFEST'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
 
-          # More reliable: if still no toList after map of findLargeFiles, force it
-          if ! grep -q '}.toList()' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt; then
-            sed -i 's/\.take(100)$/.take(100)/' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-            # Use perl for reliable multiline
-            perl -i -0pe 's/("extension" to file\.extension\s*\n\s*\}\s*\n\s*)\}/$1}.toList()/s' \
-              android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          fi
-          echo "Fixed Kotlin toList"
-          grep -n 'toList' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+              <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission"/>
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+              <uses-permission android:name="android.permission.WAKE_LOCK"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.VIBRATE"/>
 
-          # 3. Remove non-existent ScanService from manifest (actual class is ScanWorker)
-          # Delete the whole <service>...</service> block for ScanService
-          perl -i -0pe 's/\s*<!-- Foreground Service for background scanning -->\s*<service\s+android:name="\.services\.ScanService"[^>]*>\s*<\/service>//s' \
-            android/app/src/main/AndroidManifest.xml
-          # Fallback simpler removal
-          sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
-          echo "Removed ScanService from manifest"
-          grep -n 'service\|Scan' android/app/src/main/AndroidManifest.xml || echo "No service left (ok)"
+              <application
+                  android:label="PowerFiles"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:requestLegacyExternalStorage="true"
+                  android:allowBackup="true"
+                  android:theme="@style/LaunchTheme"
+                  android:hardwareAccelerated="true"
+                  tools:targetApi="34">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:taskAffinity=""
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                        android:name="io.flutter.embedding.android.NormalTheme"
+                        android:resource="@style/NormalTheme"/>
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW"/>
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <data android:scheme="content"/>
+                          <data android:scheme="file"/>
+                          <data android:mimeType="*/*"/>
+                      </intent-filter>
+                  </activity>
+
+                  <provider
+                      android:name="androidx.startup.InitializationProvider"
+                      android:authorities="${applicationId}.androidx-startup"
+                      android:exported="false"
+                      tools:node="merge">
+                      <meta-data
+                          android:name="androidx.work.WorkManagerInitializer"
+                          android:value="androidx.startup" />
+                  </provider>
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths"/>
+                  </provider>
+
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2"/>
+              </application>
+          </manifest>
+          MANIFEST
+          # Remove leading spaces from heredoc indent
+          sed -i 's/^[[:space:]]*//' android/app/src/main/AndroidManifest.xml
+          # Fix first line if broken
+          head -3 android/app/src/main/AndroidManifest.xml
+          echo "OK: Manifest rewritten (no ScanService)"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -86,11 +156,6 @@ jobs:
             'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
             > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
-
-          # Disable Instantiatable lint just in case
-          if [ -f android/app/build.gradle.kts ]; then
-            echo 'android { lint { disable += "Instantiatable" } }' >> android/app/build.gradle.kts || true
-          fi
 
       - name: Get dependencies
         run: flutter pub get
