@@ -20,27 +20,43 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Apply patches
+      - name: Apply all fixes
         run: |
           set -e
 
-          # 1. Copy pre-fixed Kotlin (has .toList already)
-          cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          echo "OK StorageChannel"
-          grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-
-          # 2. Dart fix
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
+          # 1. Dart asMap
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
+            lib/features/telegram_bot/telegram_settings_screen.dart
           echo "OK Dart"
 
-          # 3. Remove ScanService lines from manifest
+          # 2. Kotlin toList - exact string replace on ORIGINAL file (keeps BinaryMessenger ctor)
+          python3 -c '
+from pathlib import Path
+p = Path("android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt")
+t = p.read_text()
+# findLargeFiles
+old = "\"extension\" to file.extension\n                )\n            }\n    }"
+new = "\"extension\" to file.extension\n                )\n            }.toList()\n    }"
+assert old in t, "findLargeFiles pattern not found"
+t = t.replace(old, new, 1)
+# findDuplicateCandidates
+old2 = ".take(50) // Return top 50 candidate groups for hash verification in Dart"
+new2 = ".take(50).toList() // Return top 50 candidate groups for hash verification in Dart"
+assert old2 in t, "dup pattern not found"
+t = t.replace(old2, new2, 1)
+p.write_text(t)
+print("OK Kotlin toList x", t.count(".toList()"))
+print("BinaryMessenger still present:", "BinaryMessenger" in t)
+'
+
+          # 3. Manifest - remove ScanService cleanly
           sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
           sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
           sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-          # Clean up empty service tags if any left
-          sed -i '/<service$/,/\/>/d' android/app/src/main/AndroidManifest.xml || true
+          # Remove leftover empty service opening tags if any
+          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
           echo "OK Manifest"
-          grep -n service android/app/src/main/AndroidManifest.xml || echo "no service tags left"
+          grep -n service android/app/src/main/AndroidManifest.xml || echo "no service left"
 
       - name: Setup Java
         uses: actions/setup-java@v4
