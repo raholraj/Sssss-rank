@@ -20,22 +20,64 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Fix compile errors
+      - name: Fix all known compile errors
         run: |
-          # Dart fix
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart || true
+          set -e
 
-          # Kotlin fix 1: findLargeFiles - add .toList() before closing of function
-          # Replace the map closing brace pattern
-          sed -i 's/"extension" to file.extension$/"extension" to file.extension/' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
-          # More reliable: use perl for multiline
-          perl -i -0pe 's/("extension" to file\.extension\n\s+\}\n\s+)(\})/$1.toList()\n$2/s' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+          # === Dart fix ===
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
+            lib/features/telegram_bot/telegram_settings_screen.dart
+          echo "Dart asMap fixed"
 
-          # Kotlin fix 2: findDuplicateCandidates
-          sed -i 's/\.take(50) \/\/ Return top 50/.take(50).toList() \/\/ Return top 50/' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+          # === Kotlin StorageChannel fixes ===
+          KT=android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
 
-          echo "Fixes applied"
-          grep -n "toList" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt || true
+          # Fix findLargeFiles: after the map closing }, add .toList()
+          # Original ends with: }
+          #                       }
+          # We change the map's closing } to }.toList()
+          python3 << 'PY'
+path = "android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt"
+with open(path) as f:
+    lines = f.readlines()
+
+out = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    # Detect the map block end in findLargeFiles (extension line followed by } then })
+    if '"extension" to file.extension' in line:
+        out.append(line)
+        i += 1
+        # next non-empty should be closing of mapOf: }
+        while i < len(lines) and lines[i].strip() == '':
+            out.append(lines[i]); i += 1
+        if i < len(lines) and lines[i].strip() == '}':
+            # This closes mapOf - keep it
+            out.append(lines[i]); i += 1
+            # next should close the .map { } - add .toList()
+            while i < len(lines) and lines[i].strip() == '':
+                out.append(lines[i]); i += 1
+            if i < len(lines) and lines[i].strip() == '}' and '.toList()' not in lines[i]:
+                indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+                out.append(indent + '}.toList()\n')
+                i += 1
+                continue
+        continue
+    # Fix findDuplicateCandidates take(50)
+    if '.take(50)' in line and '.toList()' not in line:
+        line = line.replace('.take(50)', '.take(50).toList()')
+    out.append(line)
+    i += 1
+
+with open(path, 'w') as f:
+    f.writelines(out)
+print("Kotlin fixes applied")
+# Verify
+with open(path) as f:
+    content = f.read()
+print("toList count:", content.count(".toList()"))
+PY
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -57,7 +99,13 @@ jobs:
           fi
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
+          printf '%s\n' \
+            'distributionBase=GRADLE_USER_HOME' \
+            'distributionPath=wrapper/dists' \
+            'zipStoreBase=GRADLE_USER_HOME' \
+            'zipStorePath=wrapper/dists' \
+            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
+            > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
 
       - name: Get dependencies
