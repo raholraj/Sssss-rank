@@ -20,44 +20,27 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Apply all pre-fixed patches
+      - name: Apply patches
         run: |
           set -e
 
-          # 1. Copy pre-fixed Kotlin file (has .toList() already)
+          # 1. Copy pre-fixed Kotlin (has .toList already)
           cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          echo "OK: StorageChannel.kt replaced with fixed version"
+          echo "OK StorageChannel"
           grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
 
-          # 2. Dart asMap fix
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
-            lib/features/telegram_bot/telegram_settings_screen.dart
-          echo "OK: Dart asMap"
+          # 2. Dart fix
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' lib/features/telegram_bot/telegram_settings_screen.dart
+          echo "OK Dart"
 
-          # 3. Remove ScanService from manifest completely
-          python3 -c "
-import re
-path = 'android/app/src/main/AndroidManifest.xml'
-with open(path) as f:
-    t = f.read()
-t = re.sub(r'\s*<!-- Foreground Service for background scanning -->\s*<service[^>]*>\s*</service>', '', t)
-t = re.sub(r'\s*<!-- Foreground Service for background scanning -->\s*<service[^/]*/>', '', t)
-t = re.sub(r'\s*<service\s+android:name=\"\.services\.ScanService\"[^/]*/>', '', t)
-with open(path, 'w') as f:
-    f.write(t)
-print('OK: ScanService removed from manifest')
-print('ScanService still present:', 'ScanService' in t)
-"
-
-          # 4. Ensure uses-material-design in pubspec (prevents icon font warning becoming error)
-          if ! grep -q 'uses-material-design: true' pubspec.yaml; then
-            sed -i '/flutter:/a\  uses-material-design: true' pubspec.yaml || true
-          fi
-
-          # 5. Add cupertino_icons if missing (predicted)
-          if ! grep -q 'cupertino_icons' pubspec.yaml; then
-            sed -i '/dependencies:/a\  cupertino_icons: ^1.0.8' pubspec.yaml || true
-          fi
+          # 3. Remove ScanService lines from manifest
+          sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
+          # Clean up empty service tags if any left
+          sed -i '/<service$/,/\/>/d' android/app/src/main/AndroidManifest.xml || true
+          echo "OK Manifest"
+          grep -n service android/app/src/main/AndroidManifest.xml || echo "no service tags left"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -79,13 +62,7 @@ print('ScanService still present:', 'ScanService' in t)
           fi
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' \
-            'distributionBase=GRADLE_USER_HOME' \
-            'distributionPath=wrapper/dists' \
-            'zipStoreBase=GRADLE_USER_HOME' \
-            'zipStorePath=wrapper/dists' \
-            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
-            > android/gradle/wrapper/gradle-wrapper.properties
+          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
 
       - name: Get dependencies
