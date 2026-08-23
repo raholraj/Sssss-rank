@@ -20,38 +20,6 @@ jobs:
           cp -r powerfiles/* .
           rm -rf powerfiles
 
-      - name: Apply all fixes
-        run: |
-          set -e
-
-          # 1. Copy pre-fixed StorageChannel (single Context arg + toList)
-          cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          echo "OK StorageChannel"
-
-          # 2. Fix MainActivity to match single-arg constructor + register channel
-          # Change: StorageChannel(this, messenger) -> StorageChannel(this)
-          sed -i 's/StorageChannel(this, flutterEngine.dartExecutor.binaryMessenger)/StorageChannel(this)/' \
-            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
-
-          # Register the MethodChannel handler after creating storageChannel
-          # Insert after storageChannel = StorageChannel(this)
-          sed -i '/storageChannel = StorageChannel(this)/a\        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.powerfiles/storage").setMethodCallHandler(storageChannel)' \
-            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
-          echo "OK MainActivity"
-          grep -n "StorageChannel\|com.powerfiles/storage" android/app/src/main/kotlin/com/powerfiles/MainActivity.kt | head -10
-
-          # 3. Dart asMap
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
-            lib/features/telegram_bot/telegram_settings_screen.dart
-          echo "OK Dart"
-
-          # 4. Manifest remove ScanService
-          sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
-          echo "OK Manifest"
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -65,21 +33,84 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Android project
+      - name: Prepare Android (wrapper only)
         run: |
+          # Only generate missing wrapper - do NOT overwrite existing kotlin sources
           if [ ! -f android/gradlew ]; then
             flutter create . --platforms=android --project-name powerfiles || true
           fi
+          # Prefer Kotlin DSL - remove Groovy that flutter create may have added
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' 'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' > android/gradle/wrapper/gradle-wrapper.properties
+          printf '%s\n' \
+            'distributionBase=GRADLE_USER_HOME' \
+            'distributionPath=wrapper/dists' \
+            'zipStoreBase=GRADLE_USER_HOME' \
+            'zipStorePath=wrapper/dists' \
+            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
+            > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
+
+      - name: Apply all source fixes (AFTER any create)
+        run: |
+          set -e
+
+          # 1. Fixed StorageChannel
+          cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          echo "OK StorageChannel"
+
+          # 2. MainActivity constructor + channel register
+          sed -i 's/StorageChannel(this, flutterEngine.dartExecutor.binaryMessenger)/StorageChannel(this)/' \
+            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
+          # Only add setMethodCallHandler if not already present for storage
+          if ! grep -q 'com.powerfiles/storage' android/app/src/main/kotlin/com/powerfiles/MainActivity.kt; then
+            sed -i '/storageChannel = StorageChannel(this)/a\        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.powerfiles/storage").setMethodCallHandler(storageChannel)' \
+              android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
+          fi
+          echo "OK MainActivity"
+
+          # 3. Dart asMap
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
+            lib/features/telegram_bot/telegram_settings_screen.dart
+          echo "OK Dart"
+
+          # 4. Manifest ScanService
+          sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
+          echo "OK Manifest"
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release || true
+          echo "=== Searching for APK files ==="
+          find . -name "*.apk" -type f 2>/dev/null || true
+          # Prefer standard path, else any apk
+          if [ -f build/app/outputs/flutter-apk/app-release.apk ]; then
+            echo "Found standard APK"
+            ls -lh build/app/outputs/flutter-apk/
+          elif [ -f build/app/outputs/apk/release/app-release.apk ]; then
+            mkdir -p build/app/outputs/flutter-apk
+            cp build/app/outputs/apk/release/app-release.apk build/app/outputs/flutter-apk/
+            echo "Copied from apk/release"
+          else
+            APK=$(find . -name "*release*.apk" -type f | head -1)
+            if [ -n "$APK" ]; then
+              mkdir -p build/app/outputs/flutter-apk
+              cp "$APK" build/app/outputs/flutter-apk/app-release.apk
+              echo "Copied from $APK"
+            else
+              echo "NO APK FOUND"
+              # Show gradle output for debug
+              ls -la build/ 2>/dev/null || true
+              ls -la build/app/outputs/ 2>/dev/null || true
+              exit 1
+            fi
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
