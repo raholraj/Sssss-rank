@@ -24,39 +24,33 @@ jobs:
         run: |
           set -e
 
-          # 1. Dart asMap
+          # 1. Copy pre-fixed StorageChannel (single Context arg + toList)
+          cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          echo "OK StorageChannel"
+
+          # 2. Fix MainActivity to match single-arg constructor + register channel
+          # Change: StorageChannel(this, messenger) -> StorageChannel(this)
+          sed -i 's/StorageChannel(this, flutterEngine.dartExecutor.binaryMessenger)/StorageChannel(this)/' \
+            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
+
+          # Register the MethodChannel handler after creating storageChannel
+          # Insert after storageChannel = StorageChannel(this)
+          sed -i '/storageChannel = StorageChannel(this)/a\        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.powerfiles/storage").setMethodCallHandler(storageChannel)' \
+            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
+          echo "OK MainActivity"
+          grep -n "StorageChannel\|com.powerfiles/storage" android/app/src/main/kotlin/com/powerfiles/MainActivity.kt | head -10
+
+          # 3. Dart asMap
           sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
             lib/features/telegram_bot/telegram_settings_screen.dart
           echo "OK Dart"
 
-          # 2. Kotlin toList - exact string replace on ORIGINAL file (keeps BinaryMessenger ctor)
-          python3 -c '
-from pathlib import Path
-p = Path("android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt")
-t = p.read_text()
-# findLargeFiles
-old = "\"extension\" to file.extension\n                )\n            }\n    }"
-new = "\"extension\" to file.extension\n                )\n            }.toList()\n    }"
-assert old in t, "findLargeFiles pattern not found"
-t = t.replace(old, new, 1)
-# findDuplicateCandidates
-old2 = ".take(50) // Return top 50 candidate groups for hash verification in Dart"
-new2 = ".take(50).toList() // Return top 50 candidate groups for hash verification in Dart"
-assert old2 in t, "dup pattern not found"
-t = t.replace(old2, new2, 1)
-p.write_text(t)
-print("OK Kotlin toList x", t.count(".toList()"))
-print("BinaryMessenger still present:", "BinaryMessenger" in t)
-'
-
-          # 3. Manifest - remove ScanService cleanly
+          # 4. Manifest remove ScanService
           sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
           sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
           sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-          # Remove leftover empty service opening tags if any
           sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
           echo "OK Manifest"
-          grep -n service android/app/src/main/AndroidManifest.xml || echo "no service left"
 
       - name: Setup Java
         uses: actions/setup-java@v4
