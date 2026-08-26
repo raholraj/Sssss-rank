@@ -13,6 +13,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare source zip
+        run: |
+          if [ -f powerfiles_v2.b64 ]; then
+            base64 -d powerfiles_v2.b64 > powerfiles_fixed.zip
+            echo "Decoded v2 from b64"
+            ls -lh powerfiles_fixed.zip
+          fi
+          test -f powerfiles_fixed.zip
+
       - name: Unzip source
         run: |
           unzip -o powerfiles_fixed.zip -d powerfiles_tmp
@@ -28,6 +37,7 @@ jobs:
           cp -r "$SRC"/* .
           rm -rf powerfiles_tmp
           test -f pubspec.yaml && test -d lib && test -d android
+          ls -la
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -61,39 +71,34 @@ jobs:
       - name: Apply safe fixes
         run: |
           set -e
-          # StorageChannel: BinaryMessenger + toList (patches) OR inline toList
-          if [ -f patches/StorageChannel.kt ] && grep -q BinaryMessenger patches/StorageChannel.kt; then
+          if [ -f patches/StorageChannel.kt ]; then
             cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-            echo "OK StorageChannel from patches (BinaryMessenger)"
-          else
-            python3 -c '
+            echo "OK StorageChannel from patches"
+          fi
+          python3 -c "
 from pathlib import Path
-p = Path("android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt")
+p = Path('android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt')
 t = p.read_text()
-t = t.replace(
-  "\"extension\" to file.extension\n                )\n            }\n    }",
-  "\"extension\" to file.extension\n                )\n            }.toList()\n    }", 1)
-t = t.replace(
-  ".take(50) // Return top 50 candidate groups for hash verification in Dart",
-  ".take(50).toList() // Return top 50 candidate groups for hash verification in Dart")
+changed = False
+if '.take(50).toList()' not in t and '.take(50)' in t:
+    t = t.replace('.take(50)', '.take(50).toList()', 1)
+    changed = True
+if 'findLargeFiles' in t and '}.toList()' not in t:
+    t = t.replace(
+        '\"extension\" to file.extension\n                )\n            }\n    }',
+        '\"extension\" to file.extension\n                )\n            }.toList()\n    }'
+    )
+    changed = True
 p.write_text(t)
-print("OK inline toList", t.count(".toList()"), "BinaryMessenger", "BinaryMessenger" in t)
-'
-          fi
-          # Dart asMap
-          if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
-            sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' \
-              lib/features/telegram_bot/telegram_settings_screen.dart || true
-          fi
-          # Manifest ScanService
+print('toList count', t.count('.toList()'), 'changed', changed)
+"
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart 2>/dev/null || true
           if [ -f android/app/src/main/AndroidManifest.xml ]; then
             sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
             sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
-            sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-            sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
           fi
-          echo "OK fixes"
-          grep -n "BinaryMessenger\|class StorageChannel\|toList" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -8
+          echo "OK fixes done"
+          grep -n "toList\|BinaryMessenger\|class Storage" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -8
 
       - name: Get dependencies
         run: flutter pub get
