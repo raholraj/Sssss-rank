@@ -11,19 +11,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download v2 source
+      - name: Download bugs-fixed source
         run: |
-          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/lqpbar.zip"
+          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/mqhvrm.zip"
           ls -lh powerfiles_fixed.zip
 
       - name: Unzip
         run: |
           unzip -o powerfiles_fixed.zip -d tmp_src
-          if [ -d tmp_src/powerfiles ]; then SRC=tmp_src/powerfiles; else SRC=tmp_src; fi
+          if [ -d tmp_src/powerfiles ]; then SRC=tmp_src/powerfiles; elif [ -d tmp_src/lib ]; then SRC=tmp_src; else SRC=$(find tmp_src -maxdepth 2 -type d -name lib | head -1 | xargs dirname); fi
+          echo "SRC=$SRC"
           shopt -s dotglob
           cp -r "$SRC"/* .
           rm -rf tmp_src
           test -f pubspec.yaml
+          ls -la
 
       - uses: actions/setup-java@v4
         with:
@@ -57,11 +59,13 @@ jobs:
             echo patched StorageChannel
           fi
           sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart || true
-          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/android:name=".services.ScanService"/,+2d' android/app/src/main/AndroidManifest.xml
-          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
+          if [ -f android/app/src/main/AndroidManifest.xml ]; then
+            sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
+            sed -i '/android:name=".services.ScanService"/,+2d' android/app/src/main/AndroidManifest.xml
+            sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
+          fi
           grep -n service android/app/src/main/AndroidManifest.xml || echo no service tags left
-          grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -5
+          grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -5 || true
 
       - run: flutter pub get
 
@@ -69,22 +73,20 @@ jobs:
         run: |
           set +e
           flutter build apk --release
-          BUILD_EXIT=$?
-          set -e
-          echo "flutter exit=$BUILD_EXIT"
-          find . -name "*.apk" -type f -ls
+          echo "flutter exit: $?"
+          find . -name "*.apk" -type f
           mkdir -p build/app/outputs/flutter-apk
           APK=$(find . -name "*release*.apk" -type f | head -1)
           if [ -z "$APK" ]; then
             APK=$(find . -name "*.apk" -type f | head -1)
           fi
-          echo "Found APK=$APK"
-          test -n "$APK"
+          echo "Found APK: $APK"
           cp "$APK" build/app/outputs/flutter-apk/app-release.apk
           ls -lh build/app/outputs/flutter-apk/
+          test -f build/app/outputs/flutter-apk/app-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: powerfiles-apk-v2
+          name: powerfiles-apk-bugs-fixed
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
