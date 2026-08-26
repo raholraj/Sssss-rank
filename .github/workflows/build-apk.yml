@@ -8,46 +8,32 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Prepare source zip
+      - name: Download v2 source
         run: |
           curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/lqpbar.zip"
           ls -lh powerfiles_fixed.zip
-          test -f powerfiles_fixed.zip
-          file powerfiles_fixed.zip
 
-      - name: Unzip source
+      - name: Unzip
         run: |
-          unzip -o powerfiles_fixed.zip -d powerfiles_tmp
-          if [ -d powerfiles_tmp/powerfiles ]; then
-            SRC=powerfiles_tmp/powerfiles
-          elif [ -d powerfiles_tmp/lib ]; then
-            SRC=powerfiles_tmp
-          else
-            SRC=$(find powerfiles_tmp -maxdepth 2 -type d -name lib | head -1 | xargs dirname)
-          fi
-          echo "SRC=$SRC"
+          unzip -o powerfiles_fixed.zip -d tmp_src
+          if [ -d tmp_src/powerfiles ]; then SRC=tmp_src/powerfiles; else SRC=tmp_src; fi
           shopt -s dotglob
           cp -r "$SRC"/* .
-          rm -rf powerfiles_tmp
-          test -f pubspec.yaml && test -d lib && test -d android
-          ls -la
+          rm -rf tmp_src
+          test -f pubspec.yaml
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.5'
-          channel: 'stable'
+          channel: stable
           cache: true
 
       - name: Prepare Android
@@ -57,60 +43,38 @@ jobs:
           fi
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
-          printf '%s\n' \
-            'distributionBase=GRADLE_USER_HOME' \
-            'distributionPath=wrapper/dists' \
-            'zipStoreBase=GRADLE_USER_HOME' \
-            'zipStorePath=wrapper/dists' \
-            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' \
-            > android/gradle/wrapper/gradle-wrapper.properties
+          echo 'distributionBase=GRADLE_USER_HOME' > android/gradle/wrapper/gradle-wrapper.properties
+          echo 'distributionPath=wrapper/dists' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'zipStoreBase=GRADLE_USER_HOME' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'zipStorePath=wrapper/dists' >> android/gradle/wrapper/gradle-wrapper.properties
+          echo 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' >> android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
 
-      - name: Apply safe fixes
+      - name: Apply patches
         run: |
-          set -e
           if [ -f patches/StorageChannel.kt ]; then
             cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-            echo "OK StorageChannel from patches"
+            echo patched StorageChannel
           fi
-          python3 -c "
-from pathlib import Path
-p = Path('android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt')
-t = p.read_text()
-if '.take(50).toList()' not in t and '.take(50)' in t:
-    t = t.replace('.take(50)', '.take(50).toList()', 1)
-if 'findLargeFiles' in t and '}.toList()' not in t:
-    t = t.replace(
-        '\"extension\" to file.extension\\n                )\\n            }\\n    }',
-        '\"extension\" to file.extension\\n                )\\n            }.toList()\\n    }'
-    )
-p.write_text(t)
-print('toList count', t.count('.toList()'))
-"
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart 2>/dev/null || true
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart || true
           if [ -f android/app/src/main/AndroidManifest.xml ]; then
             sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
             sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
           fi
-          echo "OK fixes done"
-          grep -n "toList\|BinaryMessenger\|class Storage" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -8
+          grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -5
 
-      - name: Get dependencies
-        run: flutter pub get
+      - run: flutter pub get
 
       - name: Build APK
         run: |
           flutter build apk --release
           find . -name "*.apk" -type f
-          if [ ! -f build/app/outputs/flutter-apk/app-release.apk ]; then
-            APK=$(find . -name "*release*.apk" -type f | head -1)
-            mkdir -p build/app/outputs/flutter-apk
-            cp "$APK" build/app/outputs/flutter-apk/app-release.apk
-          fi
+          mkdir -p build/app/outputs/flutter-apk
+          APK=$(find . -name "*release*.apk" -type f | head -1)
+          cp "$APK" build/app/outputs/flutter-apk/app-release.apk
           ls -lh build/app/outputs/flutter-apk/
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: powerfiles-apk-v2
           path: build/app/outputs/flutter-apk/app-release.apk
