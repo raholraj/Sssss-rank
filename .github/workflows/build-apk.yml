@@ -15,12 +15,10 @@ jobs:
 
       - name: Prepare source zip
         run: |
-          if [ -f powerfiles_v2.b64 ]; then
-            base64 -d powerfiles_v2.b64 > powerfiles_fixed.zip
-            echo "Decoded v2 from b64"
-            ls -lh powerfiles_fixed.zip
-          fi
+          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/lqpbar.zip"
+          ls -lh powerfiles_fixed.zip
           test -f powerfiles_fixed.zip
+          file powerfiles_fixed.zip
 
       - name: Unzip source
         run: |
@@ -79,18 +77,15 @@ jobs:
 from pathlib import Path
 p = Path('android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt')
 t = p.read_text()
-changed = False
 if '.take(50).toList()' not in t and '.take(50)' in t:
     t = t.replace('.take(50)', '.take(50).toList()', 1)
-    changed = True
 if 'findLargeFiles' in t and '}.toList()' not in t:
     t = t.replace(
-        '\"extension\" to file.extension\n                )\n            }\n    }',
-        '\"extension\" to file.extension\n                )\n            }.toList()\n    }'
+        '\"extension\" to file.extension\\n                )\\n            }\\n    }',
+        '\"extension\" to file.extension\\n                )\\n            }.toList()\\n    }'
     )
-    changed = True
 p.write_text(t)
-print('toList count', t.count('.toList()'), 'changed', changed)
+print('toList count', t.count('.toList()'))
 "
           sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart 2>/dev/null || true
           if [ -f android/app/src/main/AndroidManifest.xml ]; then
