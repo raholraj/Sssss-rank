@@ -57,10 +57,10 @@ jobs:
             echo patched StorageChannel
           fi
           sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart || true
-          if [ -f android/app/src/main/AndroidManifest.xml ]; then
-            sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
-            sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
-          fi
+          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
+          sed -i '/android:name=".services.ScanService"/,+2d' android/app/src/main/AndroidManifest.xml
+          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
+          grep -n service android/app/src/main/AndroidManifest.xml || echo no service tags left
           grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -5
 
       - run: flutter pub get
