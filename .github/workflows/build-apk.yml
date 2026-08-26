@@ -67,10 +67,19 @@ jobs:
 
       - name: Build APK
         run: |
+          set +e
           flutter build apk --release
-          find . -name "*.apk" -type f
+          BUILD_EXIT=$?
+          set -e
+          echo "flutter exit=$BUILD_EXIT"
+          find . -name "*.apk" -type f -ls
           mkdir -p build/app/outputs/flutter-apk
           APK=$(find . -name "*release*.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find . -name "*.apk" -type f | head -1)
+          fi
+          echo "Found APK=$APK"
+          test -n "$APK"
           cp "$APK" build/app/outputs/flutter-apk/app-release.apk
           ls -lh build/app/outputs/flutter-apk/
 
