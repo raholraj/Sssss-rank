@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download bugs-fixed source
+      - name: Download local-model-fixed source
         run: |
-          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/mqhvrm.zip"
+          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/kc47vq.zip"
           ls -lh powerfiles_fixed.zip
 
       - name: Unzip
@@ -87,6 +87,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: powerfiles-apk-bugs-fixed
+          name: powerfiles-apk-local-model-fixed
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
