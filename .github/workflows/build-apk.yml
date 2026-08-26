@@ -15,10 +15,19 @@ jobs:
 
       - name: Unzip source
         run: |
-          unzip -o powerfiles_fixed.zip -d powerfiles
+          unzip -o powerfiles_fixed.zip -d powerfiles_tmp
+          if [ -d powerfiles_tmp/powerfiles ]; then
+            SRC=powerfiles_tmp/powerfiles
+          elif [ -d powerfiles_tmp/lib ]; then
+            SRC=powerfiles_tmp
+          else
+            SRC=$(find powerfiles_tmp -maxdepth 2 -type d -name lib | head -1 | xargs dirname)
+          fi
+          echo "SRC=$SRC"
           shopt -s dotglob
-          cp -r powerfiles/* .
-          rm -rf powerfiles
+          cp -r "$SRC"/* .
+          rm -rf powerfiles_tmp
+          test -f pubspec.yaml && test -d lib && test -d android
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -33,13 +42,11 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Prepare Android (wrapper only)
+      - name: Prepare Android
         run: |
-          # Only generate missing wrapper - do NOT overwrite existing kotlin sources
           if [ ! -f android/gradlew ]; then
             flutter create . --platforms=android --project-name powerfiles || true
           fi
-          # Prefer Kotlin DSL - remove Groovy that flutter create may have added
           rm -f android/settings.gradle android/build.gradle android/app/build.gradle
           mkdir -p android/gradle/wrapper
           printf '%s\n' \
@@ -51,70 +58,60 @@ jobs:
             > android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
 
-      - name: Apply all source fixes (AFTER any create)
+      - name: Apply safe fixes
         run: |
           set -e
-
-          # 1. Fixed StorageChannel
-          cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-          echo "OK StorageChannel"
-
-          # 2. MainActivity constructor + channel register
-          sed -i 's/StorageChannel(this, flutterEngine.dartExecutor.binaryMessenger)/StorageChannel(this)/' \
-            android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
-          # Only add setMethodCallHandler if not already present for storage
-          if ! grep -q 'com.powerfiles/storage' android/app/src/main/kotlin/com/powerfiles/MainActivity.kt; then
-            sed -i '/storageChannel = StorageChannel(this)/a\        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.powerfiles/storage").setMethodCallHandler(storageChannel)' \
-              android/app/src/main/kotlin/com/powerfiles/MainActivity.kt
+          # StorageChannel: BinaryMessenger + toList (patches) OR inline toList
+          if [ -f patches/StorageChannel.kt ] && grep -q BinaryMessenger patches/StorageChannel.kt; then
+            cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+            echo "OK StorageChannel from patches (BinaryMessenger)"
+          else
+            python3 -c '
+from pathlib import Path
+p = Path("android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt")
+t = p.read_text()
+t = t.replace(
+  "\"extension\" to file.extension\n                )\n            }\n    }",
+  "\"extension\" to file.extension\n                )\n            }.toList()\n    }", 1)
+t = t.replace(
+  ".take(50) // Return top 50 candidate groups for hash verification in Dart",
+  ".take(50).toList() // Return top 50 candidate groups for hash verification in Dart")
+p.write_text(t)
+print("OK inline toList", t.count(".toList()"), "BinaryMessenger", "BinaryMessenger" in t)
+'
           fi
-          echo "OK MainActivity"
-
-          # 3. Dart asMap
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/' \
-            lib/features/telegram_bot/telegram_settings_screen.dart
-          echo "OK Dart"
-
-          # 4. Manifest ScanService
-          sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
-          sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
-          echo "OK Manifest"
+          # Dart asMap
+          if [ -f lib/features/telegram_bot/telegram_settings_screen.dart ]; then
+            sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' \
+              lib/features/telegram_bot/telegram_settings_screen.dart || true
+          fi
+          # Manifest ScanService
+          if [ -f android/app/src/main/AndroidManifest.xml ]; then
+            sed -i '/ScanService/d' android/app/src/main/AndroidManifest.xml
+            sed -i '/foregroundServiceType="dataSync"/d' android/app/src/main/AndroidManifest.xml
+            sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
+            sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
+          fi
+          echo "OK fixes"
+          grep -n "BinaryMessenger\|class StorageChannel\|toList" android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -8
 
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build APK
         run: |
-          flutter build apk --release || true
-          echo "=== Searching for APK files ==="
-          find . -name "*.apk" -type f 2>/dev/null || true
-          # Prefer standard path, else any apk
-          if [ -f build/app/outputs/flutter-apk/app-release.apk ]; then
-            echo "Found standard APK"
-            ls -lh build/app/outputs/flutter-apk/
-          elif [ -f build/app/outputs/apk/release/app-release.apk ]; then
-            mkdir -p build/app/outputs/flutter-apk
-            cp build/app/outputs/apk/release/app-release.apk build/app/outputs/flutter-apk/
-            echo "Copied from apk/release"
-          else
+          flutter build apk --release
+          find . -name "*.apk" -type f
+          if [ ! -f build/app/outputs/flutter-apk/app-release.apk ]; then
             APK=$(find . -name "*release*.apk" -type f | head -1)
-            if [ -n "$APK" ]; then
-              mkdir -p build/app/outputs/flutter-apk
-              cp "$APK" build/app/outputs/flutter-apk/app-release.apk
-              echo "Copied from $APK"
-            else
-              echo "NO APK FOUND"
-              # Show gradle output for debug
-              ls -la build/ 2>/dev/null || true
-              ls -la build/app/outputs/ 2>/dev/null || true
-              exit 1
-            fi
+            mkdir -p build/app/outputs/flutter-apk
+            cp "$APK" build/app/outputs/flutter-apk/app-release.apk
           fi
+          ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: powerfiles-apk
+          name: powerfiles-apk-v2
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
