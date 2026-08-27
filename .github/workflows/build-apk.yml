@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download v3 source
+      - name: Download ondevice v4 source
         run: |
-          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/30brxn.zip"
+          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/2ttrd1.zip"
           ls -lh powerfiles_fixed.zip
 
       - name: Unzip
@@ -76,12 +76,12 @@ jobs:
             APK=$(find . -name "*.apk" -type f | head -1)
           fi
           echo "Found APK: $APK"
+          test -n "$APK"
           cp "$APK" build/app/outputs/flutter-apk/app-release.apk
           ls -lh build/app/outputs/flutter-apk/
-          test -f build/app/outputs/flutter-apk/app-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: powerfiles-apk-v3
+          name: powerfiles-apk-ondevice-v4
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
