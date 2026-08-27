@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download local-model-fixed source
+      - name: Download v3 source
         run: |
-          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/kc47vq.zip"
+          curl -sL -o powerfiles_fixed.zip "https://litter.catbox.moe/wktudw.zip"
           ls -lh powerfiles_fixed.zip
 
       - name: Unzip
@@ -52,20 +52,37 @@ jobs:
           echo 'distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-all.zip' >> android/gradle/wrapper/gradle-wrapper.properties
           chmod +x android/gradlew || true
 
-      - name: Apply patches
+      - name: Apply safe fixes
         run: |
-          if [ -f patches/StorageChannel.kt ]; then
-            cp -f patches/StorageChannel.kt android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
-            echo patched StorageChannel
+          set -e
+          # Inline toList on StorageChannel sequences (do not overwrite v3 source)
+          SC=android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt
+          if [ -f "$SC" ]; then
+            python3 -c "
+from pathlib import Path
+p = Path('android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt')
+t = p.read_text()
+if '.take(50).toList()' not in t and '.take(50)' in t:
+    t = t.replace('.take(50)', '.take(50).toList()', 1)
+if 'findLargeFiles' in t and '}.toList()' not in t.split('findLargeFiles')[-1][:400]:
+    t = t.replace(
+        '\"extension\" to file.extension\n                )\n            }\n    }',
+        '\"extension\" to file.extension\n                )\n            }.toList()\n    }',
+        1,
+    )
+p.write_text(t)
+print('toList count', t.count('.toList()'))
+"
           fi
-          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart || true
+          sed -i 's/large\.take(n)\.asMap()/large.take(n).toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart 2>/dev/null || true
+          sed -i 's/commands\.asMap()/commands.toList().asMap()/g' lib/features/telegram_bot/telegram_settings_screen.dart 2>/dev/null || true
           if [ -f android/app/src/main/AndroidManifest.xml ]; then
             sed -i '/Foreground Service for background scanning/d' android/app/src/main/AndroidManifest.xml
             sed -i '/android:name=".services.ScanService"/,+2d' android/app/src/main/AndroidManifest.xml
             sed -i '/<service$/d' android/app/src/main/AndroidManifest.xml || true
           fi
-          grep -n service android/app/src/main/AndroidManifest.xml || echo no service tags left
-          grep -n toList android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -5 || true
+          echo OK fixes
+          grep -n 'toList\|BinaryMessenger\|class Storage' android/app/src/main/kotlin/com/powerfiles/channels/StorageChannel.kt | head -8 || true
 
       - run: flutter pub get
 
@@ -87,6 +104,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: powerfiles-apk-local-model-fixed
+          name: powerfiles-apk-v3
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
